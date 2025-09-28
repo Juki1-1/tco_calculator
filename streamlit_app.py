@@ -9,32 +9,8 @@ import pandas as pd
 import io
 import matplotlib.pyplot as plt
 from tco_v2 import TCOInputs, CyclePoint, compute_tco, yearly_breakdown
-from pathlib import Path
 
-# ---------- ASETUKSET ----------
-APP_TITLE = "Your natural workspace"
-TAGLINE = "Taiga vs Traditional Building — Total Cost of Ownership"
-LOGO_PATH = "logo.PNG" # korvaa omalla tiedostolla (esim. taiga_logo.png)
-
-
-st.set_page_config(page_title=APP_TITLE, page_icon="🌲", layout="wide")
-
-
-# ---------- LATAA CSS ----------
-with open("style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-
-
-# ---------- HEADER ----------
-col_logo, col_title = st.columns([1, 5], vertical_alignment="center")
-with col_logo:
-    if LOGO_PATH and Path(LOGO_PATH).exists():
-        st.image(LOGO_PATH, use_container_width=False)
-    else:
-        st.markdown("<div class='tag'>Taiga Concept</div>", unsafe_allow_html=True)
-with col_title:
-    st.markdown(f"<div class='header'><div class='title'>{APP_TITLE}</div></div>", unsafe_allow_html=True)
-    st.caption(TAGLINE)
+st.set_page_config(page_title="Taiga vs TRAD TCO", layout="wide")
 
 # -------------------- Helpers --------------------
 
@@ -322,7 +298,7 @@ def _total_pv(summary: dict) -> float:
 # -------------------- UI --------------------
 
 init_state()
-st.title("Calculator")
+st.title("Taiga vs Traditional Building — Total Cost of Ownership")
 
 with st.expander("Shared parameters", expanded=False):
     c1, c2, c3, c4 = st.columns(4)
