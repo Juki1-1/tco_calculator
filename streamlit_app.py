@@ -316,8 +316,9 @@ with st.expander("Shared parameters", expanded=False):
     with c6:
         st.caption("Cycle settings are under Taiga section.")
 
-with st.expander("Product comparison", expanded=False):
-    st.markdown("### Product-specific inputs")
+tab_products = st.tabs(["Products"])[0]
+with tab_products:
+    st.markdown("### Products and Parameters")
     colT, colR = st.columns(2, gap="large")
 
     with colT:
