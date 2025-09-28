@@ -14,7 +14,7 @@ from pathlib import Path
 # ---------- ASETUKSET ----------
 APP_TITLE = "Your natural workspace"
 TAGLINE = "Taiga vs Traditional Building — Total Cost of Ownership"
-LOGO_PATH = "logo.png" # korvaa omalla tiedostolla (esim. taiga_logo.png)
+LOGO_PATH = "logo.PNG" # korvaa omalla tiedostolla (esim. taiga_logo.png)
 
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🌲", layout="wide")
