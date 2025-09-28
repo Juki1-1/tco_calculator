@@ -1,0 +1,66 @@
+:root {
+--accent: #2F6D4A;
+}
+
+
+/* tausta ja typografia */
+.stApp {
+background: #000000;
+}
+html, body, [class*="css"] {
+font-family: Inter, -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+color: #1f2937; /* zinc-800 */
+}
+
+
+/* kortit */
+.card {
+border: 1px solid #e5e7eb; /* zinc-200 */
+border-radius: 16px;
+padding: 20px;
+box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+}
+.card h3 {
+margin-top: 0;
+}
+
+
+/* painikkeet */
+.stButton>button {
+background: var(--accent) !important;
+color: white !important;
+border-radius: 999px !important;
+padding: 0.6rem 1rem !important;
+border: none !important;
+}
+
+
+/* header */
+.header {
+display: flex;
+gap: 14px;
+align-items: center;
+margin-bottom: 12px;
+}
+.header img {
+height: 42px;
+}
+.header .title {
+font-size: 1.6rem;
+font-weight: 700;
+letter-spacing: 0.2px;
+}
+.subtle {
+color: #6b7280;
+}
+.tag {
+display: inline-flex;
+align-items: center;
+gap: 6px;
+padding: 6px 10px;
+border-radius: 999px;
+background: #F4F7F5;
+color: var(--accent);
+font-weight: 600;
+font-size: 0.85rem;
+}
