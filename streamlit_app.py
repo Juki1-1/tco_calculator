@@ -9,7 +9,6 @@ import pandas as pd
 import io
 import matplotlib.pyplot as plt
 from tco_v2 import TCOInputs, CyclePoint, compute_tco, yearly_breakdown
-from proposal_doc import generate_proposal_doc # make doc available for download
 
 st.set_page_config(page_title="Taiga vs TRAD TCO", layout="wide")
 
@@ -308,9 +307,9 @@ with st.expander("Shared parameters", expanded=False):
     with c2:
         st.number_input("WACC (decimal, e.g., 0.08)", 0.0, 1.0, key="wacc", step=0.01)
     with c3:
-        st.number_input("Area (m²)", 0.0, 1e9, key="area_m2", step=1.0)
+        st.number_input("Area (m²)", 0.0, 1e9, key="area_m2")
     with c4:
-        st.number_input("kWh / m² / year", 0.0, 1e9, key="kwh_m2yr", step=1.0)
+        st.number_input("kWh / m² / year", 0.0, 1e9, key="kwh_m2yr")
     c5, c6 = st.columns(2)
     with c5:
         st.number_input("Electricity price (€/kWh)", 0.0, 10.0, key="elec_price", step=0.01)
@@ -354,7 +353,7 @@ with tab_products:
                 st.number_input("Install downtime per unit (h)", 0.0, 1e9,
                                 key="taiga_dt_install_h_unit", step=0.5)
             with c3:
-                st.number_input("Maint downtime per unit annually (h)", 0.0, 1e9,
+                st.number_input("Maint downtime per unit ovezoannually (h)", 0.0, 1e9,
                                 key="taiga_dt_maint_h_total_unit", step=0.5)
             st.number_input("Commissioning year", 0, 50, key="taiga_commissioning_year")
             st.number_input("End-of-life cost (total) (€)", 0.0, 1e12, key="taiga_eol_cost", step=100.0)
@@ -399,7 +398,7 @@ with tab_products:
         with st.expander("Building Pricing", expanded=False):
 
             st.number_input("Investment price per m² (TRAD) (€)",
-                            0.0, 1e6, key="trad_price_per_m2", step=50.0)
+                            0.0, 1e6, key="trad_price_per_m2", step=10.0)
         
         with st.expander("Building Parameters", expanded=False):
             st.slider("Run fraction (Traditional)", 0.0, 1.0, key="trad_run_frac")
@@ -557,29 +556,6 @@ if st.button("Download Excel (Taiga, TRAD, Delta)"):
         file_name="TCO_Comparison.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-# --- Export Word ---
-st.markdown("### Export to Word")
-payload = {
-    "customer_name": "Demo Customer",
-    "project_name": "Demo Project",
-    "date_str": pd.Timestamp.now().strftime("%Y-%m-%d"),
-    "params": shared,
-    "results": {
-        "TCO_TRAD_PV": trad_total_pv,
-        "TCO_TAIGA_PV": taiga_total_pv,
-        "DIFF_TRAD_TAIGA": trad_total_pv - taiga_total_pv,
-    },
-}
-doc_bytes = generate_proposal_doc(payload, locale="fi_FI")
-
-st.download_button(
-    label="📄 Download Word Summary",
-    data=doc_bytes,
-    file_name="TCO_Summary.docx",
-    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-)
-
 
 # Cost comparison chart
 with st.expander("Chart", expanded=False):
