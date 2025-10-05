@@ -28,7 +28,7 @@ def init_state():
     # Shared
     ss.setdefault("years", 5)
     ss.setdefault("wacc", 0.05)          # annual WACC (decimal), used everywhere incl. Leasing
-    ss.setdefault("area_m2", 4.0)
+    ss.setdefault("area_m2", 20.0)
     ss.setdefault("kwh_m2yr", 105.0)
     ss.setdefault("elec_price", 0.15)
     ss.setdefault("cycle_year", 5)       # Taiga only
@@ -46,7 +46,7 @@ def init_state():
     ss.setdefault("taiga_occ_rate", 0.35)
     ss.setdefault("taiga_standby", 0.05)
 
-    ss.setdefault("taiga_commissioning_cost_unit", 950.0)   # €/unit
+    ss.setdefault("taiga_commissioning_cost_unit", 750.0)   # €/unit
     ss.setdefault("taiga_maint_total_unit", 150.0)          # €/unit annually
     ss.setdefault("taiga_dt_rate", 15.0)                    # €/h
     ss.setdefault("taiga_dt_install_h_unit", 8.0)           # h/unit
@@ -57,20 +57,21 @@ def init_state():
 
     ss.setdefault("taiga_total_qty", 0)                     # total selected qty
 
+    
     # ---------- TRAD defaults ----------
     ss.setdefault("trad_list_price", 10_000.0)              # not used in calc
     ss.setdefault("trad_price_per_m2", 2500.0)              # investment €/m²
 
-    ss.setdefault("trad_commissioning_cost_unit", 1500.0)   # €/room/year
+    ss.setdefault("trad_commissioning_cost_unit", 950.0)   # €/room/year
     ss.setdefault("trad_commissioning_year", 1)
-    ss.setdefault("trad_maint_total_unit", 500.0)           # €/room annually
+    ss.setdefault("trad_maint_total_unit", 300.0)           # €/room annually
 
     ss.setdefault("trad_dt_rate", 15.0)                     # €/h
     ss.setdefault("trad_dt_install_h_unit", 80.0)           # h/room
     ss.setdefault("trad_dt_maint_h_total_unit", 5.0)        # h/room annually
 
     ss.setdefault("trad_eol_pct", 0.20)                     # 20% of investment
-    ss.setdefault("trad_run_frac", 0.90)
+    ss.setdefault("trad_run_frac", 0.50)
 
     # Taiga product selector state
     ss.setdefault("override_price", False)
@@ -548,7 +549,7 @@ with tab_leasing:
         if "lease_factors_df" not in st.session_state:
             st.session_state.lease_factors_df = pd.DataFrame({
                 "term_years": [3, 4, 5, 6, 7],
-                "monthly_factor": [1.95, 1.70, 1.55, 1.45, 1.38],  # %/month, user may also enter as decimal
+                "monthly_factor": [3.15, 2.45, 2.00, 1.80, 1.65],  # %/month, user may also enter as decimal
             })
     
         lf_edit = st.data_editor(
@@ -650,11 +651,6 @@ with tab_leasing:
             st.write(f"- **Monthly payment (leasing)**: {base_mo:,.0f} €")
             st.write(f"- **Monthly payment (with buyback)**: {mo_with_buyback:,.0f} €")
 
-# Area info line
-st.caption(
-        f"Using area for calculations: "
-        f"{(st.session_state.area_from_products if st.session_state.get('override_area') and st.session_state.get('area_from_products') is not None else st.session_state.area_m2):.2f} m²"
-)
 
 # -------------------- Build inputs & compute yearly tables --------------------
 
@@ -680,6 +676,53 @@ trad_rows  = yearly_breakdown(trad_inp)
 df_taiga = pd.DataFrame(taiga_rows)
 df_trad  = pd.DataFrame(trad_rows)
 
+def ensure_install_and_maint_downtime(df: pd.DataFrame, inp) -> pd.DataFrame:
+    """
+    Upsert 'downtime_pv' idempotentisti:
+      - Asennus-downtime: Year 0
+      - Huolto-downtime: Years 1..N
+    Lisää vain, jos kyseisen vuoden downtime_pv on ~0 (välttää tuplakirjauksen, jos engine on jo täyttänyt).
+    """
+    if df is None or df.empty or inp is None:
+        return df
+
+    df = ensure_cost_columns(df)
+
+    # Varmista rivit 0..N
+    years = int(getattr(inp, "years", 0) or 0)
+    for y in range(0, years + 1):
+        df = ensure_year_row(df, y)
+
+    if "downtime_pv" not in df.columns:
+        df["downtime_pv"] = 0.0
+
+    # Parametrit
+    r       = float(getattr(inp, "downtime_rate_per_hour", 0.0) or 0.0)
+    h_inst  = float(getattr(inp, "downtime_hours_install", 0.0) or 0.0)
+    h_maint = float(getattr(inp, "downtime_hours_maint_total", 0.0) or 0.0)
+    wacc    = float(getattr(inp, "wacc", 0.0) or 0.0)
+
+    eps = 1e-6
+
+    # 1) Asennus Year 0 (pakotetaan nimenomaan vuodelle 0)
+    if r > 0 and h_inst > 0:
+        pv0 = r * h_inst  # Year 0 -> ei diskonttausta
+        cur0 = float(df.loc[df["year"] == 0, "downtime_pv"].sum() or 0.0)
+        if abs(cur0) < eps:
+            df.loc[df["year"] == 0, "downtime_pv"] = df.loc[df["year"] == 0, "downtime_pv"] + pv0
+
+    # 2) Huolto vuosille 1..N (diskontattuna)
+    if r > 0 and h_maint > 0:
+        for y in range(1, years + 1):
+            disc = (1.0 + wacc) ** y
+            pvy = (r * h_maint) / disc
+            cury = float(df.loc[df["year"] == y, "downtime_pv"].sum() or 0.0)
+            if abs(cury) < eps:
+                df.loc[df["year"] == y, "downtime_pv"] = df.loc[df["year"] == y, "downtime_pv"] + pvy
+
+    return ensure_cost_columns(df)
+
+compute_or_fill_downtime_pv = ensure_install_and_maint_downtime
 # ---- Inject Acquisition & Buyback into yearly DataFrames ----
 
 # Ensure base cost columns exist first
@@ -689,6 +732,14 @@ df_trad  = ensure_cost_columns(df_trad)
 # Ensure Year 0 exists, then set acquisition at Year 0 (no discount)
 df_taiga = ensure_year_row(df_taiga, 0)
 df_trad  = ensure_year_row(df_trad, 0)
+
+# ---- NEW: Fill downtime PV if missing ----
+df_taiga = compute_or_fill_downtime_pv(df_taiga, taiga_inp)
+df_trad  = compute_or_fill_downtime_pv(df_trad, trad_inp)
+
+# Re-ensure fixed order after mutations
+df_taiga = ensure_cost_columns(df_taiga)
+df_trad  = ensure_cost_columns(df_trad)
 
 if "acquisition_pv" not in df_taiga.columns:
     df_taiga["acquisition_pv"] = 0.0
@@ -787,14 +838,54 @@ with st.expander("Total Ownership Costs (no financing costs)", expanded=False):
 # -------------------- Overall Total PV metrics --------------------
 
 st.markdown("### Overall Total Cost Comparison")
+# Area info line
+st.caption(
+        f"Using area for calculations: "
+        f"{(st.session_state.area_from_products if st.session_state.get('override_area') and st.session_state.get('area_from_products') is not None else st.session_state.area_m2):.2f} m²"
+)
 m1, m2, m3 = st.columns(3)
 with m1:
     st.metric("Taiga Total PV (€)", f"{taiga_total_pv:,.0f}")
 with m2:
     st.metric("TRAD Total PV (€)", f"{trad_total_pv:,.0f}")
 with m3:
-    st.metric("Delta Total PV (€)  (Taiga − TRAD)", f"{delta_total_pv:,.0f}",
-              delta=f"{delta_total_pv:,.0f}")
+    st.metric(
+        "Delta Total PV (€)  (Taiga − TRAD)",
+        f"{delta_total_pv:,.0f}",
+        delta=f"{delta_total_pv:,.0f}",
+        delta_color="inverse"  # vihreä, jos Taiga on halvempi (eli negatiivinen delta)
+    )
+
+# ---- Average cost per m² per month ----
+months = int(st.session_state.years) * 12
+area = float(effective_area or 1.0)  # varmistetaan ettei jaeta nollalla
+
+taiga_cost_m2_mo = taiga_total_pv / (area * months)
+trad_cost_m2_mo  = trad_total_pv  / (area * months)
+delta_cost_m2_mo = taiga_cost_m2_mo - trad_cost_m2_mo
+
+st.markdown("### Average Cost per m² per Month")
+months = int(st.session_state.years) * 12
+
+st.caption(
+    f"Values include all discounted lifecycle costs (TCO) divided by total area and months. "
+    f"Useful for comparing lifecycle efficiency across different lease durations. "
+    f"The calculation is based on a total horizon of {months} months."
+)
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("Taiga €/m²/month", f"{taiga_cost_m2_mo:,.2f}")
+with c2:
+    st.metric("TRAD €/m²/month", f"{trad_cost_m2_mo:,.2f}")
+with c3:
+    st.metric(
+        "Δ €/m²/month (Taiga − TRAD)",
+        f"{delta_cost_m2_mo:,.2f}",
+        delta=f"{delta_cost_m2_mo:,.2f}",
+        delta_color="inverse"  # vihreä jos Taiga on halvempi
+    )
+
 
 # -------------------- Export --------------------
 
@@ -825,7 +916,7 @@ doc_bytes = proposal_doc.generate_proposal_doc(
     df_pivot_trad=pv_trad,
     df_pivot_delta=pv_delta,
     locale="fi_FI",
-    logo_path="logo.png"  # e.g., "logo.png"
+    logo_path="logo.PNG"  # e.g., "logo.png"
 )
 
 st.download_button(
