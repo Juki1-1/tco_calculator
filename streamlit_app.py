@@ -398,7 +398,7 @@ def component_summary_from_yearly(df: pd.DataFrame) -> dict:
     return comp
 
 # -------------------- UI --------------------
-img_bytes = Path("logo.png").read_bytes()
+img_bytes = Path("logo.PNG").read_bytes()
 b64 = base64.b64encode(img_bytes).decode()
 css = css.replace("URL_LOGO_PLACEHOLDER", f"data:image/png;base64,{b64}")
 st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
