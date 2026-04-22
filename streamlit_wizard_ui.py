@@ -1036,7 +1036,12 @@ def _render_trad_fitout_builder(area_basis: float):
                     if element["category"] != category:
                         continue
                     lo, hi = _range_for_level(element, quality)
-                    default_qty = _default_fitout_qty(element["default_qty"], int(room_qty), float(avg_room_m2), float(auto_preview["room_perimeter_jm"]))
+                    default_qty = _default_fitout_qty(
+                        element["default_qty"],
+                        int(room_qty),
+                        float(auto_preview["avg_room_m2"]),
+                        float(auto_preview["room_perimeter_jm"]),
+                    )
                     if st.session_state.get("trad_fitout_auto_sync", True):
                         st.session_state[f"trad_fitout_qty_{idx}"] = float(default_qty)
                     qty_cols = st.columns([0.62, 0.18, 0.20], gap="small")
