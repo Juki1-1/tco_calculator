@@ -6,19 +6,24 @@
 # ---------------------------------------------------------
 
 import streamlit as st, base64
+import altair as alt
 import pandas as pd
 import io
 import matplotlib.pyplot as plt
 import leasing_calc as lc
 from importlib import reload
 from pathlib import Path
+import streamlit_wizard_ui as wizard_ui
 
 from tco_v2 import TCOInputs, CyclePoint, compute_tco, yearly_breakdown
 import proposal_doc  # keep as module, so reload works
+import offer_doc  # Word offer export
+reload(offer_doc)
 
 st.set_page_config(page_title="Taiga Calculator", layout="wide")
 
-css = Path("style.css").read_text()
+APP_DIR = Path(__file__).resolve().parent
+css = (APP_DIR / "style.css").read_text()
 
 # -------------------- Helpers --------------------
 
@@ -28,7 +33,7 @@ def init_state():
     # Shared
     ss.setdefault("years", 5)
     ss.setdefault("wacc", 0.05)          # annual WACC (decimal), used everywhere incl. Leasing
-    ss.setdefault("area_m2", 20.0)
+    ss.setdefault("area_m2", 200.0)
     ss.setdefault("kwh_m2yr", 105.0)
     ss.setdefault("elec_price", 0.15)
     ss.setdefault("cycle_year", 5)       # Taiga only
@@ -72,6 +77,27 @@ def init_state():
 
     ss.setdefault("trad_eol_pct", 0.20)                     # 20% of investment
     ss.setdefault("trad_run_frac", 0.50)
+    ss.setdefault("trad_room_qty", 0)
+    ss.setdefault("trad_use_fitout_builder", False)
+    ss.setdefault("trad_cat_region", "Finland / Norway (Helsinki, Oslo)")
+    ss.setdefault("trad_cat_quality", "Medium")
+    ss.setdefault("trad_cat_auto_geometry", True)
+    ss.setdefault("trad_cat_room_size", 20.0)
+    ss.setdefault("trad_cat_use_derived_perimeter", True)
+    ss.setdefault("trad_cat_room_perimeter", 18.0)
+    ss.setdefault("trad_fitout_auto_sync", True)
+    ss.setdefault("wizard_step", 0)
+
+    # Leasing defaults
+    ss.setdefault("lease_term_years", 5)
+    ss.setdefault("lease_wacc_annual", 0.05)
+    ss.setdefault("lease_base_price", 10_000.0)
+    ss.setdefault("lease_buyback_year", 5)
+    if "lease_factors_df" not in ss:
+        ss.lease_factors_df = pd.DataFrame({
+            "term_years": [3, 4, 5, 6, 7],
+            "monthly_factor": [3.15, 2.45, 2.00, 1.80, 1.65],
+        })
 
     # Taiga product selector state
     ss.setdefault("override_price", False)
@@ -110,13 +136,15 @@ def taiga_price_list_ui():
         except Exception as e:
             st.error(f"Failed to read file: {e}")
 
+    # ✅ Oikea kutsu ja sen jälkeen tallennus session_stateen
     edited = st.data_editor(
         st.session_state.price_df,
-        use_container_width=True,
+        width="stretch",
         num_rows="dynamic",
         column_config={"qty": st.column_config.NumberColumn("qty", min_value=0, step=1)},
-        key="price_table"
+        key="price_table",
     )
+    st.session_state.price_df = edited.copy()
 
     if not edited.empty:
         unit = edited["unit_price_eur"].fillna(0)
@@ -176,15 +204,16 @@ def build_inputs_taiga(shared):
     """Build TCOInputs for Taiga using per-unit fields scaled by qty."""
     ss = st.session_state
     qty = int(ss.get("taiga_total_qty", 0))
+    years = int(shared["years"])
 
     commissioning_total = float(ss.taiga_commissioning_cost_unit) * qty
-    maint_total = float(ss.taiga_maint_total_unit) * qty
+    maint_total = float(ss.taiga_maint_total_unit) * qty * years
     dt_install_total_h = float(ss.taiga_dt_install_h_unit) * qty
-    dt_maint_total_h   = float(ss.taiga_dt_maint_h_total_unit) * qty
+    dt_maint_total_h   = float(ss.taiga_dt_maint_h_total_unit) * qty * years
 
     return TCOInputs(
         is_taiga=True,
-        years=int(shared["years"]),
+        years=years,
         wacc=float(shared["wacc"]),
         list_price=float(ss.taiga_list_price),
         area_m2=float(shared["area_m2"]),
@@ -207,25 +236,26 @@ def build_inputs_taiga(shared):
 def build_inputs_trad(shared):
     """Build TCOInputs for TRAD. Costs scaled by rooms (qty) and years where specified."""
     ss = st.session_state
-    qty_rooms = int(ss.get("taiga_total_qty", 0))  # rooms = Taiga qty (can be separated later)
+    qty_rooms = int(ss.get("trad_room_qty", 0))
+    years = int(shared["years"])
 
     # Investment = €/m² × area
     list_price_total = float(ss.trad_price_per_m2) * float(shared["area_m2"])
 
     # Commissioning & maintenance (scaled by rooms)
     commissioning_total = float(ss.trad_commissioning_cost_unit) * qty_rooms
-    maint_total = float(ss.trad_maint_total_unit) * qty_rooms
+    maint_total = float(ss.trad_maint_total_unit) * qty_rooms * years
 
     # Downtime hours (scaled by rooms); rate €/h unchanged
     dt_install_total_h = float(ss.trad_dt_install_h_unit) * qty_rooms
-    dt_maint_total_h   = float(ss.trad_dt_maint_h_total_unit) * qty_rooms
+    dt_maint_total_h   = float(ss.trad_dt_maint_h_total_unit) * qty_rooms * years
 
     # End-of-life: % of investment
     eol_cost = float(ss.trad_eol_pct) * list_price_total
 
     return TCOInputs(
         is_taiga=False,
-        years=int(shared["years"]),
+        years=years,
         wacc=float(shared["wacc"]),
         list_price=list_price_total,
         area_m2=float(shared["area_m2"]),
@@ -398,8 +428,29 @@ def component_summary_from_yearly(df: pd.DataFrame) -> dict:
     comp["total_pv"] = float(sum(comp.values()))
     return comp
 
+init_state()
+wizard_ui.render_app(
+    app_dir=APP_DIR,
+    base_css=css,
+    taiga_price_list_ui=taiga_price_list_ui,
+    to_cycle_list=to_cycle_list,
+    build_inputs_taiga=build_inputs_taiga,
+    build_inputs_trad=build_inputs_trad,
+    ensure_cost_columns=ensure_cost_columns,
+    ensure_year_row=ensure_year_row,
+    pivot_for_display=pivot_for_display,
+    pv_total_from_yearly=pv_total_from_yearly,
+    component_summary_from_yearly=component_summary_from_yearly,
+    yearly_breakdown=yearly_breakdown,
+    proposal_doc=proposal_doc,
+    offer_doc=offer_doc,
+    leasing_calc=lc,
+    reload_module=reload,
+)
+st.stop()
+
 # -------------------- UI --------------------
-img_bytes = Path("logo.PNG").read_bytes()
+img_bytes = (APP_DIR / "logo.PNG").read_bytes()
 b64 = base64.b64encode(img_bytes).decode()
 css = css.replace("URL_LOGO_PLACEHOLDER", f"data:image/png;base64,{b64}")
 st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
@@ -478,7 +529,7 @@ with tab_products:
             st.session_state.cycle_df = st.data_editor(
                 st.session_state.cycle_df,
                 num_rows="dynamic",
-                use_container_width=True
+                width="stretch"
             )
 
     effective_area = (
@@ -489,6 +540,7 @@ with tab_products:
 
     with colR:
         st.subheader("Traditional Building (TRAD)")
+        st.number_input("Room count used for TRAD scaling", 0, 1_000_000, key="trad_room_qty", step=1)
         with st.expander("Building Pricing", expanded=False):
             st.number_input("Investment price per m² (TRAD) (€)", 0.0, 1e6,
                             key="trad_price_per_m2", step=50.0)
@@ -512,7 +564,7 @@ with tab_products:
                                 key="trad_dt_maint_h_total_unit", step=1.0)
             st.number_input("Commissioning year (kept for API)", 0, 50, key="trad_commissioning_year")
 
-        qty_rooms = st.session_state.get("taiga_total_qty", 0)
+        qty_rooms = st.session_state.get("trad_room_qty", 0)
         trad_invest_total = float(st.session_state.trad_price_per_m2) * float(effective_area)
         trad_comm_total   = float(st.session_state.trad_commissioning_cost_unit) * qty_rooms
         trad_maint_total  = float(st.session_state.trad_maint_total_unit) * qty_rooms * int(st.session_state.years)
@@ -554,7 +606,7 @@ with tab_leasing:
     
         lf_edit = st.data_editor(
             st.session_state.lease_factors_df,
-            use_container_width=True,
+            width="stretch",
             num_rows="dynamic",
             key="lease_factors_editor",
             column_config={
@@ -613,6 +665,10 @@ with tab_leasing:
         cycle_table=cp_list
     )
 
+    
+    st.session_state["lease_monthly_price"] = float(mo_with_buyback)
+    st.session_state["lease_term_months"] = int(lease_term * 12)
+
     st.markdown("### Overall Taiga Leasing Costs")
 
     cA, cB, cC = st.columns(3)
@@ -641,11 +697,11 @@ with tab_leasing:
                 cycle_year=cycle_year_input,
                 cycle_table=cp_list
             )
-            st.dataframe(df_leasing_yearly.round(0), use_container_width=True)
+            st.dataframe(df_leasing_yearly.round(0), width="stretch")
 
             st.markdown("#### Leasing pivot")
             pv_leasing = lc.pivot_leasing_for_display(df_leasing_yearly).round(0)
-            st.dataframe(pv_leasing, use_container_width=True)
+            st.dataframe(pv_leasing, width="stretch")
 
             st.markdown("#### Summary")
             st.write(f"- **Monthly payment (leasing)**: {base_mo:,.0f} €")
@@ -794,15 +850,15 @@ with st.expander("Total Ownership Costs (no financing costs)", expanded=False):
     cols = st.columns(3)
     with cols[0]:
         st.caption("Taiga")
-        st.dataframe(pd.DataFrame([taiga_sum]), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame([taiga_sum]), width="stretch", hide_index=True)
     with cols[1]:
         st.caption("TRAD")
-        st.dataframe(pd.DataFrame([trad_sum]), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame([trad_sum]), width="stretch", hide_index=True)
     with cols[2]:
         st.caption("Delta (Taiga − TRAD)")
         keys = sorted(set(taiga_sum.keys()) | set(trad_sum.keys()))
         delta = {k: taiga_sum.get(k, 0.0) - trad_sum.get(k, 0.0) for k in keys}
-        st.dataframe(pd.DataFrame([delta]), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame([delta]), width="stretch", hide_index=True)
 
     st.markdown("### Yearly breakdowns")
 
@@ -817,7 +873,7 @@ with st.expander("Total Ownership Costs (no financing costs)", expanded=False):
             return
         st.dataframe(
             pv,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 col: st.column_config.NumberColumn(col, format="%.0f", width="small")
                 for col in pv.columns
@@ -889,12 +945,49 @@ with c3:
 
 # -------------------- Export --------------------
 
+# -------------------- Export --------------------
 
 # Build pivots for Word export
 pv_taiga = pivot_for_display(df_taiga).round(0)
 pv_trad  = pivot_for_display(df_trad).round(0)
 pv_delta = pivot_for_display(df_delta).round(0) if df_delta is not None and not df_delta.empty else None
 
+# Offer export: build products_df from the selector (schema: code, name, unit_price_eur, area_m2, qty)
+_products_src = st.session_state.get("price_df", pd.DataFrame()).copy()
+
+if _products_src is None or _products_src.empty:
+    products_for_offer = pd.DataFrame(columns=["product", "qty", "unit_price", "discount_pct"])
+else:
+    # 1) Pakota numerot turvallisesti
+    _products_src["qty"] = pd.to_numeric(_products_src["qty"], errors="coerce").fillna(0)
+    _products_src["unit_price_eur"] = pd.to_numeric(_products_src["unit_price_eur"], errors="coerce").fillna(0.0)
+
+    # 2) Suodata valitut rivit
+    sel = _products_src[_products_src["qty"] > 0].copy()
+
+    # 3) Nimi: ensisijaisesti 'name', fallback 'code'
+    if "name" in sel.columns and "code" in sel.columns:
+        product_series = sel["name"].astype(str).where(sel["name"].astype(str).str.strip() != "", sel["code"].astype(str))
+    elif "name" in sel.columns:
+        product_series = sel["name"].astype(str)
+    elif "code" in sel.columns:
+        product_series = sel["code"].astype(str)
+    else:
+        product_series = sel.index.astype(str)
+
+    # 4) Rakenna export DF: unit_price tulee unit_price_eur:sta, discount_pct desimaalina (0…1)
+    products_for_offer = pd.DataFrame({
+        "product": product_series,
+        "qty": sel["qty"].astype(float),
+        "unit_price": sel["unit_price_eur"].astype(float),
+        "discount_pct": 0.0,  # 0.10 = 10 %
+    })
+
+    # Jos kaikki qty olivat 0 → tyhjä taulukko (näkyy “No products selected.” offer_docissa)
+    if products_for_offer.empty:
+        products_for_offer = pd.DataFrame(columns=["product", "qty", "unit_price", "discount_pct"])
+
+# Build payload and summaries (after all computations above)
 payload = {
     "customer_name": "Demo Customer",
     "project_name": "Demo Project",
@@ -907,23 +1000,54 @@ payload = {
     },
 }
 
-# ensure latest proposal_doc in memory
-reload(proposal_doc)
+leasing_info = {
+    "monthly_price": st.session_state.get("lease_monthly_price", None),
+    "term_months": st.session_state.get("lease_term_months", None),
+}
 
+trad_summary_offer = {
+    "taiga_pv": taiga_total_pv,
+    "trad_pv": trad_total_pv,
+    "delta_pv": taiga_total_pv - trad_total_pv,
+}
+
+# Ensure latest modules are loaded before generation
+reload(proposal_doc)
+reload(offer_doc)
+
+# Generate Word files
 doc_bytes = proposal_doc.generate_proposal_doc(
     payload=payload,
     df_pivot_taiga=pv_taiga,
     df_pivot_trad=pv_trad,
     df_pivot_delta=pv_delta,
     locale="fi_FI",
-    logo_path="logo.PNG"  # e.g., "logo.png"
+    logo_path=str(APP_DIR / "logo.PNG")
 )
 
-st.download_button(
-    label="📄 Download Word Summary",
-    data=doc_bytes,
-    file_name="TCO_Summary.docx",
-    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+offer_bytes = offer_doc.generate_offer_doc(
+    payload=payload,
+    products_df=products_for_offer,
+    leasing_info=leasing_info,
+    trad_summary=trad_summary_offer,
+    logo_path=str(APP_DIR / "logo.PNG"),
 )
+
+# Download buttons side-by-side
+bcol1, bcol2 = st.columns(2)
+with bcol1:
+    st.download_button(
+        label="📄 Download Word Summary",
+        data=doc_bytes,
+        file_name="TCO_Summary.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+with bcol2:
+    st.download_button(
+        label="🧾 Download Offer (Word)",
+        data=offer_bytes,
+        file_name="Taiga_Offer.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
 
 # -------------------- End --------------------
