@@ -1270,7 +1270,7 @@ def _render_taiga_product_selector():
         ].copy()
 
     option_map = {
-        row.code: f"{row.code} â€¢ {row.name} â€¢ EUR {float(row.unit_price_eur):,.0f} / unit â€¢ {float(row.area_m2):,.0f} m2"
+        row.code: f"{row.code} | {row.name} | EUR {float(row.unit_price_eur):,.0f} / unit | {float(row.area_m2):,.0f} m2"
         for row in filtered_df.itertuples(index=False)
     }
     all_selected_codes = price_df.loc[pd.to_numeric(price_df["qty"], errors="coerce").fillna(0) > 0, "code"].astype(str).tolist()
